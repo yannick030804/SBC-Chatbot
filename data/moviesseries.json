@@ -1,0 +1,196 @@
+{
+  "rules": [
+    {
+      "if": {
+        "type": "movie",
+        "director": "Christopher Nolan",
+        "year": 2010,
+        "genres": ["sci-fi", "thriller"],
+        "mood": ["exciting", "serious"],
+        "duration": "long",
+        "duration_min": 148,
+        "rating": 8.8,
+        "language": "English",
+        "family": false,
+        "similar_to": ["Interstellar", "Tenet"]
+      },
+      "then": "Inception"
+    },
+    {
+      "if": {
+        "type": "movie",
+        "director": "Christopher Nolan",
+        "year": 2014,
+        "genres": ["sci-fi", "drama"],
+        "mood": ["emotional", "serious"],
+        "duration": "long",
+        "duration_min": 169,
+        "rating": 8.6,
+        "language": "English",
+        "family": false,
+        "similar_to": ["Inception", "The Martian"]
+      },
+      "then": "Interstellar"
+    },
+    {
+      "if": {
+        "type": "movie",
+        "director": "Bong Joon-ho",
+        "year": 2019,
+        "genres": ["drama", "thriller"],
+        "mood": ["dark", "serious"],
+        "duration": "medium",
+        "duration_min": 132,
+        "rating": 8.5,
+        "language": "Korean",
+        "family": false,
+        "similar_to": []
+      },
+      "then": "Parasite"
+    },
+    {
+      "if": {
+        "type": "movie",
+        "director": "John Lasseter",
+        "year": 1995,
+        "genres": ["animation", "comedy"],
+        "mood": ["funny", "light"],
+        "duration": "short",
+        "duration_min": 81,
+        "rating": 8.3,
+        "language": "English",
+        "family": true,
+        "similar_to": ["Finding Nemo"]
+      },
+      "then": "Toy Story"
+    },
+    {
+      "if": {
+        "type": "movie",
+        "director": "James Wan",
+        "year": 2013,
+        "genres": ["horror", "thriller"],
+        "mood": ["scary", "dark"],
+        "duration": "medium",
+        "duration_min": 112,
+        "rating": 7.5,
+        "language": "English",
+        "family": false,
+        "similar_to": ["The Conjuring 2"]
+      },
+      "then": "The Conjuring"
+    },
+    {
+      "if": {
+        "type": "series",
+        "director": "Various",
+        "year": 1994,
+        "genres": ["comedy", "romance"],
+        "mood": ["funny", "light"],
+        "duration": "long",
+        "duration_min": 22,
+        "rating": 8.9,
+        "language": "English",
+        "family": true,
+        "similar_to": ["How I Met Your Mother"]
+      },
+      "then": "Friends"
+    },
+    {
+      "if": {
+        "type": "series",
+        "director": "Vince Gilligan",
+        "year": 2008,
+        "genres": ["drama", "crime"],
+        "mood": ["dark", "serious"],
+        "duration": "long",
+        "duration_min": 47,
+        "rating": 9.5,
+        "language": "English",
+        "family": false,
+        "similar_to": ["Better Call Saul"]
+      },
+      "then": "Breaking Bad"
+    },
+    {
+      "if": {
+        "type": "series",
+        "director": "Duffer Brothers",
+        "year": 2016,
+        "genres": ["sci-fi", "thriller", "fantasy"],
+        "mood": ["exciting", "dark"],
+        "duration": "medium",
+        "duration_min": 50,
+        "rating": 8.7,
+        "language": "English",
+        "family": true,
+        "similar_to": ["Dark"]
+      },
+      "then": "Stranger Things"
+    },
+    {
+      "if": {
+        "type": "series",
+        "director": "Baran bo Odar",
+        "year": 2017,
+        "genres": ["sci-fi", "thriller"],
+        "mood": ["dark", "serious"],
+        "duration": "medium",
+        "duration_min": 55,
+        "rating": 8.8,
+        "language": "German",
+        "family": false,
+        "similar_to": ["Stranger Things"]
+      },
+      "then": "Dark"
+    },
+    {
+      "if": {
+        "type": "series",
+        "director": "Christian Linke",
+        "year": 2021,
+        "genres": ["animation", "action", "fantasy"],
+        "mood": ["exciting", "dark"],
+        "duration": "medium",
+        "duration_min": 40,
+        "rating": 9.0,
+        "language": "English",
+        "family": false,
+        "similar_to": ["The Witcher", "Stranger Things"]
+      },
+      "then": "Arcane"
+    },
+    {
+      "if": {
+        "type": "movie",
+        "director": "Denis Villeneuve",
+        "year": 2024,
+        "genres": ["sci-fi", "adventure", "drama"],
+        "mood": ["serious", "epic"],
+        "duration": "long",
+        "duration_min": 166,
+        "rating": 8.7,
+        "language": "English",
+        "family": false,
+        "similar_to": ["Interstellar", "Star Wars"]
+      },
+      "then": "Dune: Part Two"
+    },
+    {
+      "if": {
+        "type": "movie",
+        "director": "George Lucas",
+        "year": 1977,
+        "genres": ["sci-fi", "adventure", "action"],
+        "mood": ["exciting", "light"],
+        "duration": "medium",
+        "duration_min": 121,
+        "rating": 8.6,
+        "language": "English",
+        "family": true,
+        "similar_to": ["Dune: Part Two", "The Martian"]
+      },
+      "then": "Star Wars: A New Hope"
+    }
+  ]
+}
