@@ -30,7 +30,14 @@ INFO_KEYWORDS = {
     "when",
 }
 
-RECOMMEND_KEYWORDS = {"recommend", "suggest", "watch", "looking", "want", "need"}
+RECOMMEND_KEYWORDS = {
+    "recommend",
+    "suggest",
+    "watch",
+    "looking",
+    "want",
+    "need",
+}
 
 
 def classify_intent(user_input, profile):
@@ -181,6 +188,14 @@ def match_items(item, profile):
     return score
 
 
+def get_sort_key(pair):
+    score = pair[0]
+    item = pair[1]
+    conditions = item.get("if", item)
+    rating = conditions.get("rating", 0)
+    return (score, rating)
+
+
 def recommend_best(profile, database):
     matches = []
 
@@ -192,25 +207,28 @@ def recommend_best(profile, database):
     if not matches:
         return []
 
-    matches.sort(
-        key=lambda pair: (
-            pair[0],
-            pair[1].get("if", pair[1]).get("rating", 0),
-        ),
-        reverse=True,
-    )
+    matches.sort(key=get_sort_key, reverse=True)
 
     top_score = matches[0][0]
 
     if profile["directors"]:
-        return [item for _, item in matches[:3]]
+        result = []
+        for pair in matches[:3]:
+            result.append(pair[1])
+        return result
 
-    best_items = [item for score, item in matches if score == top_score][:3]
+    best_items = []
+    for score, item in matches:
+        if score == top_score and len(best_items) < 3:
+            best_items.append(item)
 
     if best_items:
         return best_items
 
-    return [item for _, item in matches[:3]]
+    result = []
+    for pair in matches[:3]:
+        result.append(pair[1])
+    return result
 
 
 def generate_response(recommendations):

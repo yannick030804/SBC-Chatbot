@@ -72,7 +72,6 @@ def tokenize_text(text):
         return re.findall(r"\b[\w'-]+\b", text.lower())
 
 
-# Esto tokeniza y limpia el string del usuario
 def preprocess(text):
     text = text.lower()
     tokens = tokenize_text(text)
@@ -87,7 +86,6 @@ def preprocess(text):
     return cleaned_tokens
 
 
-# Los diccionarios para filtrar por tipo, genero y mood
 type_key = {
     "movie": ["movie", "movies", "film", "films"],
     "series": ["series", "show", "shows", "tv"],
@@ -249,8 +247,12 @@ def detect_directors(text, profile, knowledge_base):
         if not director:
             continue
 
-        director_parts = [part for part in re.split(r"and|,", director.lower()) if part.strip()]
-        if director.lower() in text_lower or any(part.strip() in text_lower for part in director_parts):
+        director_parts = [
+            part for part in re.split(r"and|,", director.lower()) if part.strip()
+        ]
+        if director.lower() in text_lower or any(
+            part.strip() in text_lower for part in director_parts
+        ):
             if director not in profile["directors"]:
                 profile["directors"].append(director)
 
