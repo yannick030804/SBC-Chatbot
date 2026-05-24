@@ -11,21 +11,39 @@ if str(SRC_DIR) not in sys.path:
 
 from chatbot import process_user_message
 from database import SessionLocal
-from models import User
+from models import ChatMessage, User
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "dev-secret-key"
 
 
-def get_chat_history():
-    if "chat_history" not in session:
-        session["chat_history"] = [
-            {
-                "role": "bot",
-                "message": ("Hello! I am your personal movie and series chatbot."),
-            }
-        ]
-    return session["chat_history"]
+def build_default_history():
+    return [
+        {
+            "role": "bot",
+            "message": "Hello! I am your personal movie and series chatbot.",
+        }
+    ]
+
+
+def get_chat_history(db, user_id):
+    messages = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.user_id == user_id)
+        .order_by(ChatMessage.id.asc())
+        .all()
+    )
+
+    if not messages:
+        return build_default_history()
+
+    return [{"role": message.role, "message": message.message} for message in messages]
+
+
+def save_chat_message(db, user_id, role, message):
+    chat_message = ChatMessage(user_id=user_id, role=role, message=message)
+    db.add(chat_message)
+    db.commit()
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -33,27 +51,41 @@ def chat():
     if "user_id" not in session:
         return redirect(url_for("login"))
 
-    history = get_chat_history()
+    user_id = session["user_id"]
+    db = SessionLocal()
 
-    if request.method == "POST":
-        user_message = request.form.get("message", "").strip()
-        if user_message:
-            history.append({"role": "user", "message": user_message})
-            bot_message = process_user_message(user_message)
-            history.append({"role": "bot", "message": bot_message})
-            session["chat_history"] = history
-        return redirect(url_for("chat"))
+    try:
+        history = get_chat_history(db, user_id)
 
-    return render_template(
-        "chat.html",
-        history=history,
-        username=session.get("username"),
-    )
+        if request.method == "POST":
+            user_message = request.form.get("message", "").strip()
+            if user_message:
+                save_chat_message(db, user_id, "user", user_message)
+                bot_message = process_user_message(user_message)
+                save_chat_message(db, user_id, "bot", bot_message)
+            return redirect(url_for("chat"))
+
+        return render_template(
+            "chat.html",
+            history=history,
+            username=session.get("username"),
+        )
+    finally:
+        db.close()
 
 
 @app.post("/reset")
 def reset_chat():
-    session.pop("chat_history", None)
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+
+    db = SessionLocal()
+    try:
+        db.query(ChatMessage).filter(ChatMessage.user_id == session["user_id"]).delete()
+        db.commit()
+    finally:
+        db.close()
+
     return redirect(url_for("chat"))
 
 
@@ -63,7 +95,6 @@ def register():
         return redirect(url_for("chat"))
 
     error = None
-    success = None
 
     if request.method == "POST":
         username = request.form.get("username", "").strip()
@@ -94,14 +125,11 @@ def register():
                     db.add(user)
                     db.commit()
                     db.refresh(user)
-
-                    session["user_id"] = user.id
-                    session["username"] = user.username
-                    success = "User created successfully."
+                    return redirect(url_for("login"))
             finally:
                 db.close()
 
-    return render_template("register.html", error=error, success=success)
+    return render_template("register.html", error=error)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -138,7 +166,6 @@ def login():
 def logout():
     session.pop("user_id", None)
     session.pop("username", None)
-    session.pop("chat_history", None)
     return redirect(url_for("login"))
 
 
