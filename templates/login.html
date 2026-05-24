@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='style.css') }}"
+    />
+  </head>
+  <body>
+    <main class="page">
+      <section class="chat-shell auth-shell">
+        <header class="chat-header">
+          <div>
+            <h1>Login</h1>
+            <p class="subtitle">
+              Sign in with your username and password.
+            </p>
+          </div>
+        </header>
+
+        <section class="auth-card">
+          {% if error %}
+          <p class="auth-message auth-error">{{ error }}</p>
+          {% endif %}
+
+          <form class="auth-form" action="{{ url_for('login') }}" method="post">
+            <label for="username">Username</label>
+            <input
+              id="username"
+              name="username"
+              type="text"
+              autocomplete="username"
+              minlength="3"
+              required
+            />
+
+            <label for="password">Password</label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              minlength="6"
+              required
+            />
+
+            <button type="submit">Login</button>
+          </form>
+
+          <p class="auth-switch">
+            Don't have an account?
+            <a href="{{ url_for('register') }}">Create one here</a>
+          </p>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

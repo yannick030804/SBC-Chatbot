@@ -91,6 +91,24 @@ body {
     color: var(--muted);
 }
 
+.header-actions {
+    display: grid;
+    gap: 10px;
+    justify-items: end;
+}
+
+.header-buttons {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.user-badge {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
 .chat-history {
     display: flex;
     flex-direction: column;
@@ -223,7 +241,92 @@ body {
     background: var(--accent-dark);
 }
 
+.auth-shell {
+    width: min(560px, 100%);
+    height: auto;
+}
+
+.auth-card {
+    display: grid;
+    gap: 12px;
+    padding: 8px 0 0;
+}
+
+.auth-form {
+    display: grid;
+    gap: 10px;
+}
+
+.auth-form label {
+    font-size: 0.92rem;
+    color: var(--muted);
+}
+
+.auth-form input {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 12px 14px;
+    font: inherit;
+    background: var(--panel-strong);
+    color: #f7f9fb;
+}
+
+.auth-form input:focus {
+    outline: 2px solid rgba(31, 111, 82, 0.32);
+    border-color: var(--accent);
+}
+
+.auth-form button {
+    margin-top: 8px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    padding: 12px 18px;
+    font: inherit;
+    cursor: pointer;
+    background: var(--accent);
+    color: #fff;
+}
+
+.auth-message {
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: 12px;
+    font-size: 0.94rem;
+}
+
+.auth-switch {
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 0.94rem;
+}
+
+.auth-switch a {
+    color: #b9f1db;
+    text-decoration: none;
+}
+
+.auth-switch a:hover {
+    text-decoration: underline;
+}
+
+.auth-error {
+    background: rgba(182, 66, 51, 0.14);
+    color: #ffb6ad;
+    border: 1px solid rgba(182, 66, 51, 0.18);
+}
+
+.auth-success {
+    background: rgba(31, 111, 82, 0.16);
+    color: #b9f1db;
+    border: 1px solid rgba(31, 111, 82, 0.2);
+}
+
 .secondary-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--border);
     color: #efe7dd;

@@ -19,6 +19,15 @@
               Ask for recommendations or information about a title.
             </p>
           </div>
+          <div class="header-actions">
+            <p class="user-badge">Logged in as {{ username }}</p>
+            <div class="header-buttons">
+              <form action="{{ url_for('reset_chat') }}" method="post">
+                <button type="submit" class="secondary-button">Reset chat</button>
+              </form>
+              <a href="{{ url_for('logout') }}" class="secondary-button logout-link">Logout</a>
+            </div>
+          </div>
         </header>
 
         <section
