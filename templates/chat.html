@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Movie Chatbot</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='style.css') }}"
+    />
+  </head>
+  <body>
+    <main class="page">
+      <section class="chat-shell">
+        <header class="chat-header">
+          <div>
+            <h1>Movie and Series Assistant</h1>
+            <p class="subtitle">
+              Ask for recommendations or information about a title.
+            </p>
+          </div>
+        </header>
+
+        <section
+          class="chat-history"
+          id="chat-history"
+          aria-label="Chat history"
+        >
+          {% for entry in history %}
+          <article class="message message-{{ entry.role }}">
+            <div class="message-bubble">
+              <p class="message-text">{{ entry.message }}</p>
+            </div>
+          </article>
+          {% endfor %}
+        </section>
+
+        <form class="chat-form" action="{{ url_for('chat') }}" method="post">
+          <label class="sr-only" for="message">Write your message</label>
+          <input
+            id="message"
+            name="message"
+            type="text"
+            placeholder="Recommend me a Korean movie"
+            autocomplete="off"
+            required
+          />
+          <button type="submit">Send</button>
+        </form>
+      </section>
+    </main>
+    <script>
+      const chatHistory = document.getElementById("chat-history");
+      if (chatHistory) {
+        requestAnimationFrame(() => {
+          chatHistory.scrollTop = chatHistory.scrollHeight;
+          const lastMessage = chatHistory.lastElementChild;
+          if (lastMessage) {
+            lastMessage.scrollIntoView({ block: "end" });
+          }
+        });
+      }
+    </script>
+  </body>
+</html>

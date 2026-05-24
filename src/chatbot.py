@@ -243,6 +243,30 @@ def generate_response(recommendations):
     return response
 
 
+def process_user_message(user_input):
+    cleaned_input = user_input.strip()
+
+    if not cleaned_input:
+        return "Write something and I will try to help you."
+
+    if cleaned_input.lower() == "exit":
+        return "Goodbye! Enjoy your movies."
+
+    profile = create_profile()
+    profile = extract_preferences(cleaned_input, profile, knowledge_base)
+    intent = classify_intent(cleaned_input, profile)
+
+    if intent == "greeting":
+        return generate_greeting_response()
+    if intent == "info":
+        return generate_info_response(profile["liked_titles"][0], knowledge_base)
+    if intent == "recommend":
+        recommendations = recommend_best(profile, knowledge_base)
+        return generate_response(recommendations)
+
+    return generate_unknown_response()
+
+
 def chatbot():
     print("Movie & Series Chatbot")
     print("Type 'exit' to quit.\n")
@@ -251,26 +275,10 @@ def chatbot():
         user_input = input("You: ")
 
         if user_input.lower() == "exit":
-            print("Bot: Goodbye! Enjoy your movies 🍿")
+            print("Bot: Goodbye! Enjoy your movies")
             break
 
-        profile = create_profile()
-        profile = extract_preferences(user_input, profile, knowledge_base)
-        intent = classify_intent(user_input, profile)
-
-        if intent == "greeting":
-            response = generate_greeting_response()
-        elif intent == "info":
-            response = generate_info_response(
-                profile["liked_titles"][0], knowledge_base
-            )
-        elif intent == "recommend":
-            recommendations = recommend_best(profile, knowledge_base)
-            response = generate_response(recommendations)
-        else:
-            response = generate_unknown_response()
-
-        print(f"Bot: {response}")
+        print(f"Bot: {process_user_message(user_input)}")
 
 
 if __name__ == "__main__":
