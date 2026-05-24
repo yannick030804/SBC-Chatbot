@@ -11,51 +11,95 @@
   </head>
   <body>
     <main class="page">
-      <section class="chat-shell">
-        <header class="chat-header">
-          <div>
-            <h1>Movie and Series Assistant</h1>
-            <p class="subtitle">
-              Ask for recommendations or information about a title.
-            </p>
-          </div>
-          <div class="header-actions">
-            <p class="user-badge">Logged in as {{ username }}</p>
-            <div class="header-buttons">
-              <form action="{{ url_for('reset_chat') }}" method="post">
-                <button type="submit" class="secondary-button">Reset chat</button>
-              </form>
-              <a href="{{ url_for('logout') }}" class="secondary-button logout-link">Logout</a>
+      <section class="chat-layout">
+        <section class="chat-shell">
+          <header class="chat-header">
+            <div>
+              <h1>Movie and Series Assistant</h1>
+              <p class="subtitle">
+                Ask for recommendations or information about a title.
+              </p>
             </div>
-          </div>
-        </header>
+            <div class="header-actions">
+              <p class="user-badge">Logged in as {{ username }}</p>
+              <div class="header-buttons">
+                <form action="{{ url_for('reset_chat') }}" method="post">
+                  <button type="submit" class="secondary-button">Reset chat</button>
+                </form>
+                <a href="{{ url_for('logout') }}" class="secondary-button logout-link">Logout</a>
+              </div>
+            </div>
+          </header>
 
-        <section
-          class="chat-history"
-          id="chat-history"
-          aria-label="Chat history"
-        >
-          {% for entry in history %}
-          <article class="message message-{{ entry.role }}">
-            <div class="message-bubble">
-              <p class="message-text">{{ entry.message }}</p>
-            </div>
-          </article>
-          {% endfor %}
+          <section
+            class="chat-history"
+            id="chat-history"
+            aria-label="Chat history"
+          >
+            {% for entry in history %}
+            <article class="message message-{{ entry.role }}">
+              <div class="message-bubble">
+                <p class="message-text">{{ entry.message }}</p>
+              </div>
+            </article>
+            {% endfor %}
+          </section>
+
+          <form class="chat-form" action="{{ url_for('chat') }}" method="post">
+            <label class="sr-only" for="message">Write your message</label>
+            <input
+              id="message"
+              name="message"
+              type="text"
+              placeholder="I liked Interstellar, recommend me something similar"
+              autocomplete="off"
+              required
+            />
+            <button type="submit">Send</button>
+          </form>
         </section>
 
-        <form class="chat-form" action="{{ url_for('chat') }}" method="post">
-          <label class="sr-only" for="message">Write your message</label>
-          <input
-            id="message"
-            name="message"
-            type="text"
-            placeholder="Recommend me a Korean movie"
-            autocomplete="off"
-            required
-          />
-          <button type="submit">Send</button>
-        </form>
+        <aside class="library-panel">
+          <div class="library-card">
+            <h2>Your library</h2>
+            <p class="library-subtitle">
+              Titles you mark while chatting are saved here.
+            </p>
+          </div>
+
+          <section class="library-card">
+            <h3>Favorites</h3>
+            <ul class="library-list">
+              {% for title in library.favorites %}
+              <li>{{ title }}</li>
+              {% else %}
+              <li class="library-empty">No favorites saved yet.</li>
+              {% endfor %}
+            </ul>
+          </section>
+
+          <section class="library-card">
+            <h3>Liked</h3>
+            <ul class="library-list">
+              {% for title in library.liked %}
+              <li>{{ title }}</li>
+              {% else %}
+              <li class="library-empty">No liked titles saved yet.</li>
+              {% endfor %}
+            </ul>
+          </section>
+
+          <section class="library-card">
+            <h3>Watched</h3>
+            <ul class="library-list">
+              {% for title in library.watched %}
+              <li>{{ title }}</li>
+              {% else %}
+              <li class="library-empty">No watched titles saved yet.</li>
+              {% endfor %}
+            </ul>
+          </section>
+        </aside>
       </section>
     </main>
     <script>

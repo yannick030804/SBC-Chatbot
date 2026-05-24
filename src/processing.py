@@ -117,6 +117,55 @@ mood_key = {
 }
 
 NEGATIONS = ["not", "no"]
+WATCHED_PATTERNS = [
+    "i watched",
+    "i have watched",
+    "i saw",
+    "just watched",
+    "he visto",
+    "acabo de ver",
+    "vi ",
+]
+LIKED_PATTERNS = [
+    "i liked",
+    "i love",
+    "i loved",
+    "me gusto",
+    "me gustó",
+    "me ha gustado",
+    "me encanta",
+    "me encanto",
+    "me encantó",
+]
+DISLIKED_PATTERNS = [
+    "i disliked",
+    "i hated",
+    "i did not like",
+    "i didn't like",
+    "no me gusto",
+    "no me gustó",
+    "no me ha gustado",
+    "odie",
+    "odié",
+]
+FAVORITE_PATTERNS = [
+    "favorite",
+    "favourite",
+    "favorita",
+    "favorito",
+    "de mis favoritas",
+    "de mis favoritos",
+]
+SIMILAR_PATTERNS = [
+    "similar",
+    "like this",
+    "like that",
+    "parecida",
+    "parecido",
+    "parecidas",
+    "parecidos",
+    "algo como",
+]
 LANGUAGE_KEY = {
     "english": "English",
     "korean": "Korean",
@@ -146,6 +195,28 @@ def create_profile():
         "mood": [],
         "liked_titles": [],
     }
+
+
+def detect_message_actions(text):
+    lowered_text = text.lower()
+
+    actions = {
+        "mark_watched": any(pattern in lowered_text for pattern in WATCHED_PATTERNS),
+        "mark_liked": any(pattern in lowered_text for pattern in LIKED_PATTERNS),
+        "mark_disliked": any(pattern in lowered_text for pattern in DISLIKED_PATTERNS),
+        "mark_favorite": any(pattern in lowered_text for pattern in FAVORITE_PATTERNS),
+        "recommend_similar": any(
+            pattern in lowered_text for pattern in SIMILAR_PATTERNS
+        ),
+    }
+
+    if actions["mark_disliked"]:
+        actions["mark_liked"] = False
+
+    if actions["mark_favorite"]:
+        actions["mark_liked"] = True
+
+    return actions
 
 
 def detect_type(text, profile):

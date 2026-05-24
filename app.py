@@ -9,12 +9,13 @@ SRC_DIR = Path(__file__).resolve().parent / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from chatbot import process_user_message
+from chatbot import get_user_library, process_user_message
 from database import SessionLocal
-from models import ChatMessage, User
+from models import ChatMessage, User, create_tables
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "dev-secret-key"
+create_tables()
 
 
 def build_default_history():
@@ -56,18 +57,20 @@ def chat():
 
     try:
         history = get_chat_history(db, user_id)
+        library = get_user_library(db, user_id)
 
         if request.method == "POST":
             user_message = request.form.get("message", "").strip()
             if user_message:
                 save_chat_message(db, user_id, "user", user_message)
-                bot_message = process_user_message(user_message)
+                bot_message = process_user_message(user_message, db=db, user_id=user_id)
                 save_chat_message(db, user_id, "bot", bot_message)
             return redirect(url_for("chat"))
 
         return render_template(
             "chat.html",
             history=history,
+            library=library,
             username=session.get("username"),
         )
     finally:
