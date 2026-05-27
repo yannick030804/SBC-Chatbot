@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from database import Base, engine
@@ -62,6 +62,7 @@ class ConversationState(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
     state = Column(String(50), nullable=False, default="idle")
+    context = Column(Text, nullable=False, default="{}")
     updated_at = Column(
         DateTime,
         default=datetime.utcnow,

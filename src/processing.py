@@ -1,5 +1,6 @@
 import re
 import string
+from difflib import SequenceMatcher
 
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
@@ -106,12 +107,12 @@ genre_key = {
 }
 
 mood_key = {
-    "dark": ["dark", "harsh"],
+    "dark": ["dark", "darker", "harsh"],
     "emotional": ["emotional"],
     "epic": ["epic"],
     "exciting": ["exciting", "thrilling"],
     "funny": ["funny"],
-    "light": ["light", "easy", "relax", "relaxing"],
+    "light": ["light", "lighter", "easy", "relax", "relaxing"],
     "scary": ["scary"],
     "serious": ["serious"],
 }
@@ -120,52 +121,170 @@ NEGATIONS = ["not", "no"]
 WATCHED_PATTERNS = [
     "i watched",
     "i have watched",
+    "i've watched",
+    "i already watched",
     "i saw",
+    "i have seen",
+    "i've seen",
+    "i already saw",
+    "i already seen",
+    "i just watched",
+    "i just saw",
+    "already watched",
+    "already saw",
+    "already seen",
     "just watched",
     "he visto",
     "acabo de ver",
     "vi ",
+    "ya vi",
+    "ya he visto",
 ]
 LIKED_PATTERNS = [
+    "i like",
     "i liked",
     "i love",
     "i loved",
+    "i really like",
+    "i really liked",
+    "i enjoy",
+    "i enjoyed",
+    "i'm into",
+    "i am into",
+    "i'm a fan of",
+    "i am a fan of",
+    "this was good",
+    "this is good",
     "me gusto",
     "me gustó",
+    "me gustaron",
     "me ha gustado",
+    "me gustan",
     "me encanta",
     "me encanto",
     "me encantó",
+    "me encantan",
+    "me flipa",
+    "me flipa",
+    "me flipó",
 ]
 DISLIKED_PATTERNS = [
+    "i do not like",
     "i disliked",
     "i hated",
     "i did not like",
     "i didn't like",
+    "i do not enjoy",
+    "i don't enjoy",
+    "i am not into",
+    "i'm not into",
+    "this was bad",
+    "this is bad",
     "no me gusto",
     "no me gustó",
     "no me ha gustado",
+    "no me gustan",
+    "no me gusta",
     "odie",
     "odié",
 ]
 FAVORITE_PATTERNS = [
     "favorite",
     "favourite",
+    "one of my favorites",
+    "one of my favourites",
+    "my favorite",
+    "my favourite",
+    "top favorite",
     "favorita",
     "favorito",
     "de mis favoritas",
     "de mis favoritos",
+    "de mis preferidas",
+    "de mis preferidos",
 ]
 SIMILAR_PATTERNS = [
     "similar",
     "like this",
     "like that",
+    "something like this",
+    "something like that",
+    "something similar",
+    "anything similar",
+    "recommend something like",
+    "recommend me something like",
+    "recommend me something similar",
+    "suggest something like",
+    "suggest something similar",
     "parecida",
     "parecido",
     "parecidas",
     "parecidos",
     "algo como",
+    "algo similar",
+    "algo parecido",
+    "recomiendame algo como",
+    "recomiéndame algo como",
+    "recomiendame algo parecido",
+    "recomiéndame algo parecido",
+    "sugiereme algo parecido",
+    "sugiéreme algo parecido",
 ]
+ANOTHER_RECOMMENDATION_PATTERNS = [
+    "another one",
+    "another recommendation",
+    "another movie",
+    "another series",
+    "something else",
+    "anything else",
+    "not that one",
+    "not this one",
+    "give me another",
+    "recommend another",
+    "recommend me another",
+    "else please",
+    "otra",
+    "otro",
+    "otra recomendacion",
+    "otra recomendación",
+    "otro titulo",
+    "otro título",
+    "algo mas",
+    "algo más",
+    "esa no",
+    "ese no",
+    "no esa",
+    "no ese",
+]
+GENERIC_TITLE_SKIP_WORDS = {
+    "a",
+    "an",
+    "another",
+    "me",
+    "no",
+    "not",
+    "one",
+    "that",
+    "this",
+    "movie",
+    "movies",
+    "film",
+    "films",
+    "series",
+    "show",
+    "shows",
+    "tv",
+    "something",
+    "anything",
+    "else",
+    "it",
+    "please",
+    "algo",
+    "similar",
+    "parecido",
+    "parecida",
+    "like",
+}
 LANGUAGE_KEY = {
     "english": "English",
     "korean": "Korean",
@@ -180,6 +299,18 @@ FAMILY_KEY = {
     True: ["family", "kid", "kids", "child", "children"],
     False: ["adult", "adults", "mature"],
 }
+AMBIGUOUS_TITLE_TOKENS = set(type_key.keys()) | set(genre_key.keys()) | set(mood_key.keys())
+GENERIC_PREFERENCE_TOKENS = (
+    set(type_key.keys())
+    | {token for values in type_key.values() for token in values}
+    | set(genre_key.keys())
+    | {token for values in genre_key.values() for token in values}
+    | set(mood_key.keys())
+    | {token for values in mood_key.values() for token in values}
+    | set(LANGUAGE_KEY.keys())
+    | set(DURATION_KEY.keys())
+    | {token for values in FAMILY_KEY.values() for token in values}
+)
 
 
 def create_profile():
@@ -194,6 +325,9 @@ def create_profile():
         "genres_dislike": [],
         "mood": [],
         "liked_titles": [],
+        "matched_title_candidates": [],
+        "unmatched_title_candidates": [],
+        "fuzzy_title_matches": {},
     }
 
 
@@ -207,6 +341,10 @@ def detect_message_actions(text):
         "mark_favorite": any(pattern in lowered_text for pattern in FAVORITE_PATTERNS),
         "recommend_similar": any(
             pattern in lowered_text for pattern in SIMILAR_PATTERNS
+        ),
+        "recommend_another": any(
+            pattern in lowered_text
+            for pattern in ANOTHER_RECOMMENDATION_PATTERNS
         ),
     }
 
@@ -295,19 +433,202 @@ def detect_mood(text, profile):
                     profile["mood"].append(mood)
 
 
-# Detect mentioned titles
-def detect_titles(text, profile, knowledge_base):
+def normalize_title_text(text):
+    normalized = re.sub(r"[^a-z0-9\s]", " ", text.lower())
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+
+def has_explicit_title_context(text, title):
+    escaped_title = re.escape(title.lower())
+    title_context_patterns = [
+        rf"\b(?:tell me about|give me information about|info about|about)\s+{escaped_title}\b",
+        rf"\b(?:i like|i liked|i love|i loved|i enjoy|i enjoyed|i watched|i have seen|i've seen)\s+{escaped_title}\b",
+        rf"\b(?:me gusta|me gust[oó]|me gustaron|me encanta|me encant[oó])\s+{escaped_title}\b",
+    ]
+    return any(re.search(pattern, text) for pattern in title_context_patterns)
+
+
+def is_generic_request_fragment(candidate):
+    tokens = preprocess(candidate)
+    if not tokens:
+        return True
+
+    if len(tokens) == 1:
+        return (
+            tokens[0] in GENERIC_TITLE_SKIP_WORDS
+            and tokens[0] not in AMBIGUOUS_TITLE_TOKENS
+        )
+
+    if all(token in GENERIC_TITLE_SKIP_WORDS for token in tokens):
+        return True
+
+    generic_signal_words = set(type_key.keys()) | set(genre_key.keys()) | set(mood_key.keys())
+    if "family" in tokens:
+        generic_signal_words.add("family")
+
+    if any(token in generic_signal_words for token in tokens):
+        return True
+
+    return False
+
+
+def clean_title_candidate(candidate):
+    candidate = candidate.strip()
+    candidate = re.sub(
+        r"^(me ha gustado mucho|me ha gustado|me gusto mucho|me gustaron|me gust[oó]|"
+        r"me encanta|i really like|i really liked|i like|i liked|i loved|i love|"
+        r"i enjoy|i enjoyed|i already watched|i have watched|i've watched|i watched|"
+        r"i already saw|i already seen|i saw|i have seen|i've seen|i just watched|"
+        r"i just saw|he visto|acabo de ver)\s+",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    candidate = re.sub(
+        r"^(tell me about|give me information about|give me info about|"
+        r"information about|info about|about)\s+",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    candidate = re.sub(
+        r"^(recomiendame|recomiéndame|recommend me|recommend|suggest|sugiere)\s+",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    if re.match(
+        r"^(algo que sea parecido|algo parecido|something similar|something like)",
+        candidate,
+        flags=re.IGNORECASE,
+    ):
+        return ""
+    candidate = re.sub(
+        r"\s+(recomiendame|recomiéndame|recommend|suggest|algo parecido.*|"
+        r"something similar.*)$",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    candidate = candidate.strip(" .!?")
+
+    if is_generic_request_fragment(candidate):
+        return ""
+
+    return candidate
+
+
+def extract_title_candidates(text):
+    split_pattern = r",|;|\by\b|\band\b"
+    raw_candidates = re.split(split_pattern, text, flags=re.IGNORECASE)
+    cleaned_candidates = []
+
+    for candidate in raw_candidates:
+        cleaned_candidate = clean_title_candidate(candidate)
+        if len(cleaned_candidate) >= 3:
+            cleaned_candidates.append(cleaned_candidate)
+
+    return cleaned_candidates
+
+
+def find_best_title_match(candidate, title_index):
+    normalized_candidate = normalize_title_text(candidate)
+    if not normalized_candidate:
+        return None, False
+
+    if normalized_candidate in title_index:
+        return title_index[normalized_candidate], False
+
+    best_title = None
+    best_score = 0
+
+    for normalized_title, original_title in title_index.items():
+        score = SequenceMatcher(None, normalized_candidate, normalized_title).ratio()
+        if score > best_score:
+            best_score = score
+            best_title = original_title
+
+    if best_score >= 0.72:
+        return best_title, True
+
+    return None, False
+
+
+def add_matched_title(profile, title):
+    if title not in profile["liked_titles"]:
+        profile["liked_titles"].append(title)
+
+
+def detect_titles(text, profile, knowledge_base, allow_ambiguous_titles=False):
     text_lower = text.lower()
+    title_index = {}
+    exact_matches = set()
 
     for item in knowledge_base:
         title = item.get("then")
         if not title:
             continue
-        title = title.lower()
 
-        if title in text_lower:
-            if item["then"] not in profile["liked_titles"]:
-                profile["liked_titles"].append(item["then"])
+        normalized_title = normalize_title_text(title)
+        title_index[normalized_title] = title
+
+        if (
+            " " not in normalized_title
+            and normalized_title in AMBIGUOUS_TITLE_TOKENS
+            and not has_explicit_title_context(text_lower, title)
+            and not allow_ambiguous_titles
+        ):
+            continue
+
+        if title.lower() in text_lower:
+            add_matched_title(profile, title)
+            exact_matches.add(title)
+
+    candidates = extract_title_candidates(text)
+
+    for candidate in candidates:
+        normalized_candidate = normalize_title_text(candidate)
+        if not normalized_candidate:
+            continue
+
+        candidate_tokens = preprocess(candidate)
+        if (
+            len(candidate_tokens) == 1
+            and candidate_tokens[0] in GENERIC_PREFERENCE_TOKENS
+            and not (
+                allow_ambiguous_titles
+                and normalized_candidate in title_index
+            )
+        ):
+            continue
+
+        if exact_matches and any(
+            normalize_title_text(exact_title) in normalized_candidate
+            for exact_title in exact_matches
+        ):
+            continue
+
+        if profile["directors"] and any(
+            normalize_title_text(director) in normalized_candidate
+            for director in profile["directors"]
+        ):
+            continue
+
+        matched_title, was_fuzzy = find_best_title_match(candidate, title_index)
+
+        if matched_title is None:
+            if candidate not in profile["unmatched_title_candidates"]:
+                profile["unmatched_title_candidates"].append(candidate)
+            continue
+
+        add_matched_title(profile, matched_title)
+
+        if matched_title not in profile["matched_title_candidates"]:
+            profile["matched_title_candidates"].append(matched_title)
+
+        if was_fuzzy:
+            profile["fuzzy_title_matches"][candidate] = matched_title
 
 
 def detect_directors(text, profile, knowledge_base):
@@ -328,7 +649,12 @@ def detect_directors(text, profile, knowledge_base):
                 profile["directors"].append(director)
 
 
-def extract_preferences(user_input, profile, knowledge_base):
+def extract_preferences(
+    user_input,
+    profile,
+    knowledge_base,
+    allow_ambiguous_titles=False,
+):
 
     detect_type(user_input, profile)
     detect_directors(user_input, profile, knowledge_base)
@@ -338,6 +664,11 @@ def extract_preferences(user_input, profile, knowledge_base):
     detect_family(user_input, profile)
     detect_genres(user_input, profile)
     detect_mood(user_input, profile)
-    detect_titles(user_input, profile, knowledge_base)
+    detect_titles(
+        user_input,
+        profile,
+        knowledge_base,
+        allow_ambiguous_titles=allow_ambiguous_titles,
+    )
 
     return profile

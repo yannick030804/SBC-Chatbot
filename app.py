@@ -11,7 +11,7 @@ if str(SRC_DIR) not in sys.path:
 
 from chatbot import get_user_library, process_user_message
 from database import SessionLocal
-from models import ChatMessage, User, create_tables
+from models import ChatMessage, ConversationState, User, create_tables
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "dev-secret-key"
@@ -85,6 +85,9 @@ def reset_chat():
     db = SessionLocal()
     try:
         db.query(ChatMessage).filter(ChatMessage.user_id == session["user_id"]).delete()
+        db.query(ConversationState).filter(
+            ConversationState.user_id == session["user_id"]
+        ).delete()
         db.commit()
     finally:
         db.close()
