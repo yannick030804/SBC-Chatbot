@@ -1,0 +1,7 @@
+flask
+werkzeug
+sqlalchemy
+psycopg2-binary
+nltk
+requests
+python-dotenv

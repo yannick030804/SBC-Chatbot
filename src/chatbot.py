@@ -1,13 +1,17 @@
 import json
-from pathlib import Path
 
-from processing import *
-
-DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "moviesseries.json"
-
-with DATA_FILE.open("r", encoding="utf-8") as f:
-    data = json.load(f)
-    knowledge_base = data.get("rules") or data.get("items") or []
+from processing import (
+    create_profile,
+    preprocess,
+    extract_preferences,
+    detect_message_actions,
+)
+from tmdb import (
+    recommend_by_title,
+    recommend_by_tmdb_id,
+    recommend_by_preferences,
+    get_title_info,
+)
 
 GREETING_WORDS = {
     "hello",
@@ -50,6 +54,7 @@ COLLECTING_PREFERENCES_STATE = "collecting_preferences"
 AWAITING_TYPE_STATE = "awaiting_type_preference"
 AWAITING_MOOD_MOVIE_STATE = "awaiting_mood_preference_movie"
 AWAITING_MOOD_SERIES_STATE = "awaiting_mood_preference_series"
+AWAITING_TITLE_SELECTION_STATE = "awaiting_title_selection"
 FLEXIBLE_REPLY_WORDS = {
     "anything",
     "whatever",
@@ -65,6 +70,7 @@ PENDING_CONVERSATION_STATES = {
     AWAITING_TYPE_STATE,
     AWAITING_MOOD_MOVIE_STATE,
     AWAITING_MOOD_SERIES_STATE,
+    AWAITING_TITLE_SELECTION_STATE,
 }
 
 
@@ -86,6 +92,8 @@ def classify_intent(user_input, profile):
             len(tokens) <= 3
             and not profile["liked_titles"]
             and not profile["directors"]
+            and not profile["actors"]
+            and not profile["people"]
             and not profile["languages"]
             and not profile["genres_like"]
             and not profile["mood"]
@@ -104,6 +112,8 @@ def classify_intent(user_input, profile):
     if (
         profile["type"]
         or profile["directors"]
+        or profile["actors"]
+        or profile["people"]
         or profile["languages"]
         or profile["durations"]
         or profile["years"]
@@ -119,33 +129,23 @@ def classify_intent(user_input, profile):
     return "unknown"
 
 
-def find_rule_by_title(title, database):
-    title_lower = title.lower()
-
-    for item in database:
-        if item.get("then", "").lower() == title_lower:
-            return item
-
-    return None
-
-
-def generate_info_response(title, database):
-    item = find_rule_by_title(title, database)
+def generate_info_response(title):
+    item = get_title_info(title)
     if item is None:
-        return f"I couldn't find information about {title} in my database yet."
+        return f"I couldn't find information about '{title}' in my database."
 
-    conditions = item.get("if", {})
-    genres = ", ".join(conditions.get("genres", [])) or "unknown genres"
-    moods = ", ".join(conditions.get("mood", [])) or "unknown mood"
-    similar = ", ".join(conditions.get("similar_to", [])) or "no similar titles listed"
+    genres = ", ".join(item.get("genres", [])) or "unknown genres"
+    year = item.get("year") or "an unknown year"
+    rating = item.get("rating")
+    rating_str = f"{rating:.1f}/10" if rating else "unknown"
+    runtime = item.get("runtime")
+    runtime_str = f"{runtime} minutes" if runtime else "unknown duration"
+    overview = item.get("overview") or "No description available."
 
     return (
-        f"{item['then']} is a {conditions.get('type', 'title')} directed by {conditions.get('director', 'Unknown Director')} "
-        f"from {conditions.get('year', 'an unknown year')}. "
-        f"It is {genres} with a {moods} tone. "
-        f"It runs for {conditions.get('duration_min', 'unknown')} minutes, has a rating of {conditions.get('rating', 'unknown')}, "
-        f"and is in {conditions.get('language', 'an unknown language')}. "
-        f"Similar titles: {similar}."
+        f"{item['title']} ({year}) is a {item['type']}. "
+        f"Genres: {genres}. Rating: {rating_str}. Runtime: {runtime_str}.\n\n"
+        f"{overview}"
     )
 
 
@@ -200,6 +200,44 @@ def generate_mood_retry_response():
     return "Do you want something darker or lighter?"
 
 
+def generate_title_selection_question(options, query):
+    lines = [f"I found several titles matching '{query}'. Which one do you mean?"]
+    for i, opt in enumerate(options, 1):
+        year_str = f" ({opt['year']})" if opt.get("year") else ""
+        lines.append(f"{i}. {opt['title']}{year_str}")
+    return "\n".join(lines)
+
+
+def format_selected_title(option):
+    title = option.get("title", "")
+    year = option.get("year")
+
+    if year and f"({year})" not in title:
+        return f"{title} ({year})"
+
+    return title
+
+
+def parse_title_selection(user_input, options):
+    text = user_input.strip()
+    
+    if text.isdigit():
+        index = int(text) - 1
+        if 0 <= index < len(options):
+            return options[index]
+    
+    text_lower = text.lower()
+    for opt in options:
+        if opt["title"].lower() == text_lower:
+            return opt
+        if opt.get("year") and opt["year"] in text:
+            title_lower = opt["title"].lower()
+            if any(word in text_lower for word in title_lower.split()[:3]):
+                return opt
+    
+    return None
+
+
 def generate_personalization_hint():
     return (
         "If you want, tell me a couple of movies or series you liked and I can "
@@ -223,6 +261,9 @@ def generate_guided_greeting_response(conversation_state, profile):
     if conversation_state == AWAITING_MOOD_SERIES_STATE:
         return "Hello! Do you want a darker series or something lighter?"
 
+    if conversation_state == AWAITING_TITLE_SELECTION_STATE:
+        return "Hello! Which title did you mean? Reply with the number or the title name."
+
     if profile["type"] == "movie" and profile["mood"]:
         return f"Hello! Do you want a darker movie or something lighter?"
 
@@ -241,29 +282,14 @@ def format_title_list(titles):
 
 
 def build_title_detection_feedback(profile):
-    feedback_parts = []
-
-    fuzzy_matches = profile.get("fuzzy_title_matches", {})
-    if fuzzy_matches:
-        corrections = [
-            f"{candidate} -> {matched_title}"
-            for candidate, matched_title in fuzzy_matches.items()
-        ]
-        feedback_parts.append(
-            "I understood these as: " + "; ".join(corrections) + "."
-        )
-
     unmatched_titles = profile.get("unmatched_title_candidates", [])
     if unmatched_titles:
-        feedback_parts.append(
-            "I could not identify: " + format_title_list(unmatched_titles) + "."
-        )
-
-    return " ".join(feedback_parts)
+        return "I couldn't find: " + format_title_list(unmatched_titles) + "."
+    return ""
 
 
 def get_title_attribute(item, attribute_name, default=None):
-    return item.get("if", item).get(attribute_name, default)
+    return item.get(attribute_name, default)
 
 
 def build_profile_from_state(state, profile):
@@ -286,6 +312,8 @@ def merge_profile_with_context(profile, context):
 
     for field in [
         "directors",
+        "actors",
+        "people",
         "languages",
         "durations",
         "years",
@@ -305,6 +333,8 @@ def build_context_from_profile(profile):
     return {
         "type": profile["type"],
         "directors": profile["directors"],
+        "actors": profile["actors"],
+        "people": profile["people"],
         "languages": profile["languages"],
         "durations": profile["durations"],
         "years": profile["years"],
@@ -337,6 +367,8 @@ def should_override_guided_state(intent, profile, actions):
         or actions.get("mark_favorite")
         or bool(profile["liked_titles"])
         or bool(profile["directors"])
+        or bool(profile["actors"])
+        or bool(profile["people"])
     )
 
 
@@ -514,8 +546,8 @@ def build_user_update_response(updated_titles, label):
 
     if label == "a favorite":
         if len(updated_titles) == 1:
-            return f"Great, I'll keep {title_list} down as one of your favorites."
-        return f"Great, I'll keep {title_list} down as some of your favorites."
+            return f"Great, I'll remember {title_list} as one of your favorites."
+        return f"Great, I'll remember {title_list} as some of your favorites."
 
     if label == "disliked":
         if len(updated_titles) == 1:
@@ -532,6 +564,8 @@ def has_meaningful_preferences(profile):
         [
             profile["type"],
             profile["directors"],
+            profile["actors"],
+            profile["people"],
             profile["languages"],
             profile["durations"],
             profile["years"],
@@ -548,6 +582,8 @@ def is_open_recommendation_request(profile):
         and not profile["mood"]
         and not profile["genres_like"]
         and not profile["directors"]
+        and not profile["actors"]
+        and not profile["people"]
         and not profile["languages"]
         and not profile["durations"]
         and not profile["years"]
@@ -560,197 +596,139 @@ def is_flexible_reply(text):
     return text.strip().lower() in FLEXIBLE_REPLY_WORDS
 
 
-def get_candidate_types(profile, database, excluded_titles=None):
-    candidate_types = set()
-
-    for item in database:
-        if match_items(item, profile, excluded_titles=excluded_titles) >= 0:
-            candidate_type = get_title_attribute(item, "type")
-            if candidate_type:
-                candidate_types.add(candidate_type)
-
-    return candidate_types
+def get_candidate_types(profile, excluded_titles=None):
+    return {"movie", "series"}
 
 
-def match_items(item, profile, excluded_titles=None):
-    score = 0
-    conditions = item.get("if", item)
+def recommend_best(profile, excluded_titles=None):
     excluded_titles = excluded_titles or set()
+    year = profile["years"][0] if profile["years"] else None
 
-    if item.get("then") in excluded_titles:
-        return -1
+    results = recommend_by_preferences(
+        content_type=profile["type"],
+        genres=profile["genres_like"] if profile["genres_like"] else None,
+        year=year,
+        directors=profile["directors"],
+        actors=profile["actors"],
+        people=profile["people"],
+        durations=profile["durations"],
+        excluded_titles=excluded_titles,
+        limit=4,
+    )
 
-    if profile["type"] is not None and conditions.get("type") != profile["type"]:
-        return -1
-
-    if profile["directors"]:
-        director = conditions.get("director", "")
-        if director not in profile["directors"]:
-            return -1
-        score += 2
-
-    if profile["languages"] and conditions.get("language") not in profile["languages"]:
-        return -1
-
-    if profile["durations"] and conditions.get("duration") not in profile["durations"]:
-        return -1
-
-    if profile["years"] and conditions.get("year") not in profile["years"]:
-        return -1
-
-    if profile["family"] is not None and conditions.get("family") != profile["family"]:
-        return -1
-
-    for genre in profile["genres_like"]:
-        if genre not in conditions.get("genres", []):
-            return -1
-        score += 1
-
-    for genre in profile["genres_dislike"]:
-        if genre in conditions.get("genres", []):
-            return -1
-
-    for mood in profile["mood"]:
-        if mood not in conditions.get("mood", []):
-            return -1
-        score += 1
-
-    for liked in profile["liked_titles"]:
-        if liked in conditions.get("similar_to", []):
-            score += 1
-
-    if profile["type"] is not None and conditions.get("type") == profile["type"]:
-        score += 1
-
-    if (
-        not profile["directors"]
-        and not profile["languages"]
-        and not profile["durations"]
-        and not profile["years"]
-        and profile["family"] is None
-        and not profile["genres_like"]
-        and not profile["mood"]
-        and not profile["liked_titles"]
-    ):
-        score += conditions.get("rating", 0) / 10
-
-    return score
+    return results
 
 
-def get_sort_key(pair):
-    score = pair[0]
-    item = pair[1]
-    conditions = item.get("if", item)
-    rating = conditions.get("rating", 0)
-    return (score, rating)
-
-
-def recommend_best(profile, database, excluded_titles=None):
-    matches = []
-
-    for item in database:
-        score = match_items(item, profile, excluded_titles=excluded_titles)
-        if score >= 0:
-            matches.append((score, item))
-
-    if not matches:
-        return []
-
-    matches.sort(key=get_sort_key, reverse=True)
-
-    top_score = matches[0][0]
-
-    if profile["directors"]:
-        result = []
-        for pair in matches[:3]:
-            result.append(pair[1])
-        return result
-
-    best_items = []
-    for score, item in matches:
-        if score == top_score and len(best_items) < 3:
-            best_items.append(item)
-
-    if best_items:
-        return best_items
-
-    result = []
-    for pair in matches[:3]:
-        result.append(pair[1])
-    return result
-
-
-def recommend_similar_titles(base_title, database, excluded_titles=None):
-    item = find_rule_by_title(base_title, database)
-    if item is None:
-        return []
-
+def recommend_from_seed_titles(seed_titles, excluded_titles=None, content_type=None):
     excluded_titles = set(excluded_titles or set())
-    excluded_titles.add(base_title)
+    seed_recommendations = []
 
-    similar_titles = get_title_attribute(item, "similar_to", [])
+    for title in seed_titles:
+        similar = recommend_by_title(title, content_type=content_type, limit=6)
+        filtered_recommendations = []
+
+        for item in similar:
+            item_title = item.get("title", "")
+            item_type = item.get("type", "")
+            
+            if content_type and item_type != content_type:
+                continue
+
+            filtered_recommendations.append(item)
+
+        seed_recommendations.append(filtered_recommendations)
+
+    excluded_lower = {title.lower() for title in excluded_titles}
+    seen_titles = set(excluded_lower)
     recommendations = []
+    max_results = max((len(items) for items in seed_recommendations), default=0)
 
-    for similar_title in similar_titles:
-        if similar_title in excluded_titles:
-            continue
-        similar_item = find_rule_by_title(similar_title, database)
-        if similar_item is not None:
-            recommendations.append(similar_item)
-        if len(recommendations) == 3:
-            break
+    # Interleave results so multiple liked titles can influence the final answer.
+    for index in range(max_results):
+        for items in seed_recommendations:
+            if index >= len(items):
+                continue
+
+            item = items[index]
+            item_title = item.get("title", "")
+            normalized_title = item_title.lower()
+
+            if normalized_title and normalized_title not in seen_titles:
+                seen_titles.add(normalized_title)
+                recommendations.append(item)
+
+            if len(recommendations) == 4:
+                return recommendations
 
     return recommendations
 
 
-def recommend_from_seed_titles(seed_titles, database, excluded_titles=None):
+def recommend_from_selected_title(
+    seed_titles,
+    selected_title,
+    excluded_titles=None,
+    content_type=None,
+):
     excluded_titles = set(excluded_titles or set())
-    ranked_titles = {}
+    seed_recommendations = []
 
     for title in seed_titles:
-        item = find_rule_by_title(title, database)
-        if item is None:
-            continue
+        seed_recommendations.append(
+            [
+                item
+                for item in recommend_by_title(
+                    title,
+                    content_type=content_type,
+                    limit=6,
+                )
+                if not content_type or item.get("type") == content_type
+            ]
+        )
 
-        excluded_titles.add(title)
+    selected_recommendations = recommend_by_tmdb_id(
+        selected_title.get("id"),
+        selected_title.get("media_type", "movie"),
+        limit=6,
+    )
+    if content_type:
+        selected_recommendations = [
+            item
+            for item in selected_recommendations
+            if item.get("type") == content_type
+        ]
 
-        for position, similar_title in enumerate(
-            get_title_attribute(item, "similar_to", []),
-            start=1,
-        ):
-            if similar_title in excluded_titles:
-                continue
+    seed_recommendations.append(selected_recommendations)
 
-            similar_item = find_rule_by_title(similar_title, database)
-            if similar_item is None:
-                continue
-
-            bonus = max(0, 4 - position)
-            ranked_titles[similar_title] = ranked_titles.get(similar_title, 0) + bonus
-
-    if not ranked_titles:
-        return []
-
+    excluded_lower = {title.lower() for title in excluded_titles}
+    seen_titles = set(excluded_lower)
     recommendations = []
-    for title, _score in sorted(
-        ranked_titles.items(),
-        key=lambda pair: (-pair[1], pair[0]),
-    ):
-        item = find_rule_by_title(title, database)
-        if item is not None:
-            recommendations.append(item)
-        if len(recommendations) == 3:
-            break
+    max_results = max((len(items) for items in seed_recommendations), default=0)
+
+    for index in range(max_results):
+        for items in seed_recommendations:
+            if index >= len(items):
+                continue
+
+            item = items[index]
+            item_title = item.get("title", "")
+            normalized_title = item_title.lower()
+
+            if normalized_title and normalized_title not in seen_titles:
+                seen_titles.add(normalized_title)
+                recommendations.append(item)
+
+            if len(recommendations) == 4:
+                return recommendations
 
     return recommendations
 
 
 def get_recommendation_titles(recommendations):
-    return [item["then"] for item in recommendations]
+    return [item.get("title", "") for item in recommendations]
 
 
 def remember_recommendations(db, user_id, context, recommendations, profile):
-    shown_recommendations = get_recommendation_titles(recommendations[:1])
+    shown_recommendations = get_recommendation_titles(recommendations[:4])
     recent_recommendations = list(context.get("last_recommendations", []))
 
     for title in shown_recommendations:
@@ -782,35 +760,22 @@ def build_recommendation_response(
 
 
 def explain_recommendation_match(item, profile, intro=None):
-    conditions = item.get("if", item)
     reasons = []
     intro_text = (intro or "").lower()
 
-    if profile["directors"] and conditions.get("director") in profile["directors"]:
-        reasons.append(f"It's from {conditions['director']}.")
-
+    item_genres = item.get("genres", [])
     matching_genres = [
-        genre for genre in profile["genres_like"] if genre in conditions.get("genres", [])
+        genre for genre in profile["genres_like"] if genre in item_genres
     ]
     if matching_genres:
         reasons.append(f"It leans into {format_title_list(matching_genres)}.")
 
-    matching_moods = [
-        mood for mood in profile["mood"] if mood in conditions.get("mood", [])
-    ]
-    if matching_moods:
-        mood_text = format_title_list(matching_moods)
-        if mood_text not in intro_text:
-            reasons.append(f"Tone-wise, it lands on the {mood_text} side.")
+    if item.get("rating") and item["rating"] >= 7.5:
+        reasons.append(f"It has a strong rating of {item['rating']:.1f}/10.")
 
-    matching_similar_titles = [
-        title
-        for title in profile["liked_titles"]
-        if title in conditions.get("similar_to", [])
-    ]
-    if matching_similar_titles:
+    if profile["liked_titles"]:
         reasons.append(
-            f"It has a similar vibe to {format_title_list(matching_similar_titles)}."
+            f"It has a similar vibe to {format_title_list(profile['liked_titles'][:2])}."
         )
 
     return reasons[:2]
@@ -830,9 +795,9 @@ def generate_recommendation_text(title, item, profile, intro=None):
 
 def generate_response(recommendations, intro=None):
     if not recommendations:
-        return "I couldn't find anything in my catalog that matches what you're asking for."
+        return "I couldn't find anything that matches what you're asking for."
 
-    titles = [item["then"] for item in recommendations]
+    titles = [item.get("title", "Unknown") for item in recommendations]
 
     if intro:
         if len(titles) == 1:
@@ -854,21 +819,39 @@ def generate_response(recommendations, intro=None):
 
 def generate_explained_response(recommendations, profile, intro=None):
     if not recommendations:
-        return "I couldn't find anything in my catalog that matches what you're asking for."
+        return "I couldn't find anything that matches what you're asking for."
 
-    first_recommendation = recommendations[0]
-    title = first_recommendation["then"]
-    recommendation = generate_recommendation_text(
-        title,
-        first_recommendation,
-        profile,
-        intro=intro,
-    )
+    if len(recommendations) == 1:
+        item = recommendations[0]
+        title = item.get("title", "Unknown")
+        reasons = explain_recommendation_match(item, profile, intro=intro)
+        reason_text = generate_reason_sentence(reasons)
+
+        if intro:
+            return f"{intro} you could try {title}.{reason_text}"
+        return f"You could try {title}.{reason_text}"
+
+    response_parts = []
 
     if intro:
-        return f"{intro} {recommendation[0].lower()}{recommendation[1:]}"
+        response_parts.append(f"{intro} here are some options:\n")
+    else:
+        response_parts.append("Here are some options:\n")
 
-    return recommendation
+    for item in recommendations[:4]:
+        title = item.get("title", "Unknown")
+        year = item.get("year", "")
+        rating = item.get("rating")
+
+        title_line = f"- {title}"
+        if year:
+            title_line += f" ({year})"
+        if rating:
+            title_line += f" - {rating:.1f}/10"
+
+        response_parts.append(title_line)
+
+    return "\n".join(response_parts)
 
 
 def build_recommendation_intro(profile, actions, updated_titles=None):
@@ -916,6 +899,8 @@ def should_reuse_last_recommendation_context(actions, profile):
     return (
         profile["type"] is None
         and not profile["directors"]
+        and not profile["actors"]
+        and not profile["people"]
         and not profile["languages"]
         and not profile["durations"]
         and not profile["years"]
@@ -924,6 +909,63 @@ def should_reuse_last_recommendation_context(actions, profile):
         and not profile["mood"]
         and not profile["liked_titles"]
     )
+
+
+def has_new_action_while_selecting(text):
+    actions = detect_message_actions(text)
+    tokens = set(preprocess(text))
+
+    return (
+        bool(tokens.intersection(RECOMMEND_KEYWORDS | INFO_KEYWORDS))
+        or actions.get("mark_watched")
+        or actions.get("mark_liked")
+        or actions.get("mark_disliked")
+        or actions.get("mark_favorite")
+        or actions.get("recommend_similar")
+        or actions.get("recommend_another")
+    )
+
+
+def get_pending_title_action(text, actions):
+    tokens = set(preprocess(text))
+
+    if tokens.intersection(INFO_KEYWORDS):
+        return "info"
+    if actions.get("mark_favorite"):
+        return "favorite"
+    if actions.get("mark_disliked"):
+        return "disliked"
+    if actions.get("mark_watched") and actions.get("mark_liked"):
+        return "liked_watched"
+    if actions.get("mark_watched"):
+        return "watched"
+    if actions.get("recommend_similar"):
+        return "liked"
+    if actions.get("mark_liked"):
+        return "liked"
+
+    return "mentioned"
+
+
+def should_save_pending_titles_as_liked(conversation_state, pending_action):
+    return conversation_state == COLLECTING_PREFERENCES_STATE or pending_action in {
+        "liked",
+        "liked_watched",
+        "favorite",
+    }
+
+
+def build_partial_title_selection_intro(saved_titles, pending_action):
+    if not saved_titles:
+        return ""
+
+    if pending_action == "favorite":
+        return build_user_update_response(saved_titles, "a favorite")
+
+    if pending_action == "liked_watched":
+        return build_user_update_response(saved_titles, "liked and watched")
+
+    return build_user_update_response(saved_titles, "liked")
 
 
 def build_relaxed_profile_for_another(profile):
@@ -935,6 +977,17 @@ def build_relaxed_profile_for_another(profile):
             relaxed_profile["liked_titles"].append(title)
 
     return relaxed_profile
+
+
+def build_seed_profile(seed_titles, content_type=None):
+    profile = create_profile()
+    profile["type"] = content_type
+
+    for title in seed_titles:
+        if title not in profile["liked_titles"]:
+            profile["liked_titles"].append(title)
+
+    return profile
 
 
 def process_user_message(user_input, db=None, user_id=None):
@@ -949,13 +1002,137 @@ def process_user_message(user_input, db=None, user_id=None):
     user_library = get_user_library(db, user_id)
     conversation_state = get_conversation_state(db, user_id)
     conversation_context = get_conversation_context(db, user_id)
+    
+    if conversation_state == AWAITING_TITLE_SELECTION_STATE:
+        pending_options = conversation_context.get("pending_title_options", [])
+        pending_action = conversation_context.get("pending_action", "liked")
+        
+        if pending_options:
+            if is_short_greeting(cleaned_input):
+                return generate_guided_greeting_response(conversation_state, create_profile())
+
+            selected = parse_title_selection(cleaned_input, pending_options)
+            if selected:
+                set_conversation_state(db, user_id, IDLE_STATE)
+                title = format_selected_title(selected)
+                pending_seed_titles = conversation_context.get("pending_seed_titles", [])
+                
+                if pending_action == "liked":
+                    save_user_title_preferences(db, user_id, [title], liked=True)
+                    seed_titles = pending_seed_titles + [title]
+                    seed_profile = build_seed_profile(seed_titles)
+                    recommendations = recommend_from_selected_title(
+                        pending_seed_titles,
+                        selected,
+                    )
+                    if pending_seed_titles:
+                        response = f"Got it! I'll also keep {title} in mind as something you liked."
+                    else:
+                        response = f"Got it! I'll keep {title} in mind as something you liked."
+                    if recommendations:
+                        response += "\n\n" + build_recommendation_response(
+                            db, user_id, {}, recommendations,
+                            seed_profile, intro="Based on those titles,"
+                        )
+                    return response
+                elif pending_action == "liked_watched":
+                    save_user_title_preferences(db, user_id, [title], liked=True, watched=True)
+                    seed_titles = pending_seed_titles + [title]
+                    seed_profile = build_seed_profile(seed_titles)
+                    recommendations = recommend_from_selected_title(
+                        pending_seed_titles,
+                        selected,
+                    )
+                    if pending_seed_titles:
+                        response = f"Got it! I'll also remember {title} as something you liked and already watched."
+                    else:
+                        response = f"Got it! I'll remember {title} as something you liked and already watched."
+                    if recommendations:
+                        response += "\n\n" + build_recommendation_response(
+                            db, user_id, {}, recommendations,
+                            seed_profile, intro="Based on those titles,"
+                        )
+                    return response
+                elif pending_action == "watched":
+                    save_user_title_preferences(db, user_id, [title], watched=True)
+                    return f"Got it, I'll keep {title} as something you've already watched."
+                elif pending_action == "favorite":
+                    save_user_title_preferences(db, user_id, [title], favorite=True)
+                    seed_titles = pending_seed_titles + [title]
+                    seed_profile = build_seed_profile(seed_titles)
+                    recommendations = recommend_from_selected_title(
+                        pending_seed_titles,
+                        selected,
+                    )
+                    response = f"Great! I'll keep {title} as one of your favorites."
+                    if recommendations:
+                        response += "\n\n" + build_recommendation_response(
+                            db, user_id, {}, recommendations,
+                            seed_profile, intro="Based on your favorite,"
+                        )
+                    return response
+                elif pending_action == "disliked":
+                    save_user_title_preferences(db, user_id, [title], disliked=True)
+                    return f"Understood, I'll avoid recommending things too close to {title}."
+                elif pending_action == "info":
+                    return generate_info_response(title)
+                else:
+                    return f"Got it, you mentioned {title}."
+            else:
+                if has_new_action_while_selecting(cleaned_input):
+                    set_conversation_state(db, user_id, IDLE_STATE)
+                    conversation_state = IDLE_STATE
+                    conversation_context = {}
+                else:
+                    return "I didn't understand your selection. Please reply with the number (1, 2, 3...) or the title name."
+    
     profile = create_profile()
     profile = extract_preferences(
         cleaned_input,
         profile,
-        knowledge_base,
         allow_ambiguous_titles=conversation_state == COLLECTING_PREFERENCES_STATE,
     )
+    
+    if profile.get("ambiguous_title_options"):
+        options = profile["ambiguous_title_options"]
+        query = profile["ambiguous_title_query"]
+        actions = detect_message_actions(cleaned_input)
+        pending_action = get_pending_title_action(cleaned_input, actions)
+        if conversation_state == COLLECTING_PREFERENCES_STATE and pending_action == "mentioned":
+            pending_action = "liked"
+        pending_seed_titles = list(profile["liked_titles"])
+        intro_message = ""
+
+        if (
+            pending_seed_titles
+            and should_save_pending_titles_as_liked(conversation_state, pending_action)
+        ):
+            save_user_title_preferences(
+                db,
+                user_id,
+                pending_seed_titles,
+                liked=True,
+                watched=pending_action == "liked_watched",
+                favorite=pending_action == "favorite",
+            )
+            intro_message = build_partial_title_selection_intro(
+                pending_seed_titles,
+                pending_action,
+            )
+        
+        set_conversation_state(
+            db, user_id, AWAITING_TITLE_SELECTION_STATE,
+            context={
+                "pending_title_options": options,
+                "pending_action": pending_action,
+                "pending_seed_titles": pending_seed_titles,
+            }
+        )
+        selection_question = generate_title_selection_question(options, query)
+        if intro_message:
+            return intro_message + "\n\n" + selection_question
+        return selection_question
+    
     actions = detect_message_actions(cleaned_input)
     current_message_titles = list(profile["liked_titles"])
     if conversation_state in PENDING_CONVERSATION_STATES:
@@ -988,14 +1165,13 @@ def process_user_message(user_input, db=None, user_id=None):
         elif is_flexible_reply(cleaned_input):
             recommendations = recommend_best(
                 profile,
-                knowledge_base,
                 excluded_titles=excluded_titles,
             )
             if not recommendations and known_seed_titles:
                 recommendations = recommend_from_seed_titles(
                     known_seed_titles,
-                    knowledge_base,
                     excluded_titles=excluded_titles,
+                    content_type=profile["type"],
                 )
             response = build_recommendation_response(
                 db,
@@ -1024,19 +1200,20 @@ def process_user_message(user_input, db=None, user_id=None):
             profile["mood"]
             or profile["genres_like"]
             or profile["directors"]
+            or profile["actors"]
+            or profile["people"]
             or profile["languages"]
             or profile["durations"]
         ):
             recommendations = recommend_best(
                 profile,
-                knowledge_base,
                 excluded_titles=excluded_titles,
             )
             if not recommendations and known_seed_titles:
                 recommendations = recommend_from_seed_titles(
                     known_seed_titles,
-                    knowledge_base,
                     excluded_titles=excluded_titles,
+                    content_type=profile["type"],
                 )
             response = build_recommendation_response(
                 db,
@@ -1067,14 +1244,13 @@ def process_user_message(user_input, db=None, user_id=None):
         if is_flexible_reply(cleaned_input):
             recommendations = recommend_best(
                 profile,
-                knowledge_base,
                 excluded_titles=excluded_titles,
             )
             if not recommendations and known_seed_titles:
                 recommendations = recommend_from_seed_titles(
                     known_seed_titles,
-                    knowledge_base,
                     excluded_titles=excluded_titles,
+                    content_type=profile["type"],
                 )
             response = build_recommendation_response(
                 db,
@@ -1093,15 +1269,14 @@ def process_user_message(user_input, db=None, user_id=None):
 
         recommendations = recommend_best(
             profile,
-            knowledge_base,
             excluded_titles=excluded_titles,
         )
 
         if not recommendations and known_seed_titles:
             recommendations = recommend_from_seed_titles(
                 known_seed_titles,
-                knowledge_base,
                 excluded_titles=excluded_titles,
+                content_type=profile["type"],
             )
 
         response = build_recommendation_response(
@@ -1145,14 +1320,13 @@ def process_user_message(user_input, db=None, user_id=None):
 
         recommendations = recommend_from_seed_titles(
             updated_titles,
-            knowledge_base,
             excluded_titles=excluded_titles,
+            content_type=profile["type"],
         )
 
         if not recommendations:
             recommendations = recommend_best(
                 profile,
-                knowledge_base,
                 excluded_titles=excluded_titles,
             )
 
@@ -1223,6 +1397,24 @@ def process_user_message(user_input, db=None, user_id=None):
             recent_update_titles = updated_titles
             excluded_titles.update(updated_titles)
 
+            recommendations = recommend_from_seed_titles(
+                updated_titles,
+                excluded_titles=excluded_titles,
+                content_type=profile["type"],
+            )
+            if recommendations:
+                response_parts.append(
+                    build_recommendation_response(
+                        db,
+                        user_id,
+                        conversation_context,
+                        recommendations,
+                        profile,
+                        intro="Since you liked that,",
+                    ).strip()
+                )
+                return "\n\n".join(part for part in response_parts if part)
+
         if actions["mark_favorite"]:
             updated_titles = save_user_title_preferences(
                 db,
@@ -1236,7 +1428,30 @@ def process_user_message(user_input, db=None, user_id=None):
             recent_update_titles = updated_titles
             excluded_titles.update(updated_titles)
 
+            recommendations = recommend_from_seed_titles(
+                updated_titles,
+                excluded_titles=excluded_titles,
+                content_type=profile["type"],
+            )
+            if recommendations:
+                response_parts.append(
+                    build_recommendation_response(
+                        db,
+                        user_id,
+                        conversation_context,
+                        recommendations,
+                        profile,
+                        intro="Based on your favorite,",
+                    ).strip()
+                )
+                return "\n\n".join(part for part in response_parts if part)
+
         if actions["mark_disliked"]:
+            was_previously_liked = any(
+                t in user_library["liked"] or t in user_library["favorites"]
+                for t in titles
+            )
+            
             updated_titles = save_user_title_preferences(
                 db,
                 user_id,
@@ -1247,26 +1462,52 @@ def process_user_message(user_input, db=None, user_id=None):
             update_message = build_user_update_response(updated_titles, "disliked")
             if update_message:
                 response_parts.append(update_message)
+            
+            if was_previously_liked:
+                response_parts.append(
+                    "I've also removed it from your liked titles."
+                )
+            
             recent_update_titles = updated_titles
             excluded_titles.update(updated_titles)
+            
+            known_seed_titles = user_library["favorites"] or user_library["liked"]
+            if known_seed_titles:
+                recommendations = recommend_from_seed_titles(
+                    [t for t in known_seed_titles if t not in excluded_titles],
+                    excluded_titles=excluded_titles,
+                    content_type=profile["type"],
+                )
+                if recommendations:
+                    response_parts.append(
+                        build_recommendation_response(
+                            db,
+                            user_id,
+                            conversation_context,
+                            recommendations,
+                            profile,
+                            intro="Maybe you'd prefer something like this instead:",
+                        ).strip()
+                    )
+            
+            return "\n\n".join(part for part in response_parts if part)
 
     if intent == "greeting":
         return generate_greeting_response()
     if intent == "info":
-        return generate_info_response(profile["liked_titles"][0], knowledge_base)
+        return generate_info_response(profile["liked_titles"][0])
     if actions["recommend_similar"] and profile["liked_titles"]:
         if title_feedback:
             response_parts.append(title_feedback)
         recommendations = recommend_from_seed_titles(
             profile["liked_titles"],
-            knowledge_base,
             excluded_titles=excluded_titles,
+            content_type=profile["type"],
         )
 
         if not recommendations:
             recommendations = recommend_best(
                 profile,
-                knowledge_base,
                 excluded_titles=excluded_titles,
             )
 
@@ -1308,7 +1549,6 @@ def process_user_message(user_input, db=None, user_id=None):
         if profile["type"] is None and not profile["liked_titles"]:
             candidate_types = get_candidate_types(
                 profile,
-                knowledge_base,
                 excluded_titles=excluded_titles,
             )
             if len(candidate_types) > 1:
@@ -1323,43 +1563,30 @@ def process_user_message(user_input, db=None, user_id=None):
         if title_feedback:
             response_parts.append(title_feedback)
 
-        if has_meaningful_preferences(profile):
-            recommendations = recommend_best(
-                profile,
-                knowledge_base,
-                excluded_titles=excluded_titles,
-            )
-        elif profile["liked_titles"]:
+        recommendations = []
+        
+        if profile["liked_titles"]:
             recommendations = recommend_from_seed_titles(
                 profile["liked_titles"],
-                knowledge_base,
                 excluded_titles=excluded_titles,
+                content_type=profile["type"],
             )
-        else:
+        elif known_seed_titles:
             recommendations = recommend_from_seed_titles(
                 known_seed_titles,
-                knowledge_base,
                 excluded_titles=excluded_titles,
+                content_type=profile["type"],
             )
-
-        if not recommendations and known_seed_titles:
-            recommendations = recommend_from_seed_titles(
-                known_seed_titles,
-                knowledge_base,
-                excluded_titles=excluded_titles,
-            )
-
-        if not recommendations and profile["liked_titles"]:
+        
+        if not recommendations and has_meaningful_preferences(profile):
             recommendations = recommend_best(
                 profile,
-                knowledge_base,
                 excluded_titles=excluded_titles,
             )
 
         if not recommendations and actions["recommend_another"]:
             recommendations = recommend_best(
                 build_relaxed_profile_for_another(profile),
-                knowledge_base,
                 excluded_titles=excluded_titles,
             )
 

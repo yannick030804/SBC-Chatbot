@@ -1,8 +1,14 @@
 import os
 from getpass import getuser
+from pathlib import Path
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
+from dotenv import load_dotenv
+
+
+env_path = Path(__file__).resolve().parent / ".env"
+load_dotenv(env_path)
 
 
 def build_database_url():

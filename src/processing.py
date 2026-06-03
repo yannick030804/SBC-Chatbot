@@ -170,23 +170,50 @@ LIKED_PATTERNS = [
 ]
 DISLIKED_PATTERNS = [
     "i do not like",
+    "i don't like",
+    "i dislike",
     "i disliked",
     "i hated",
+    "i hate",
     "i did not like",
     "i didn't like",
     "i do not enjoy",
     "i don't enjoy",
+    "i didn't enjoy",
     "i am not into",
     "i'm not into",
+    "i'm not a fan of",
+    "i am not a fan of",
+    "not a fan of",
+    "wasn't good",
+    "wasn't great",
+    "was not good",
+    "was terrible",
+    "was awful",
+    "was bad",
+    "didn't enjoy",
+    "did not enjoy",
     "this was bad",
     "this is bad",
+    "that was bad",
     "no me gusto",
     "no me gustó",
     "no me ha gustado",
     "no me gustan",
     "no me gusta",
+    "no me gustaron",
+    "no me encanto",
+    "no me encantó",
     "odie",
     "odié",
+    "lo odié",
+    "la odié",
+    "fue mala",
+    "fue malo",
+    "fue horrible",
+    "fue terrible",
+    "es mala",
+    "es malo",
 ]
 FAVORITE_PATTERNS = [
     "favorite",
@@ -311,12 +338,30 @@ GENERIC_PREFERENCE_TOKENS = (
     | set(DURATION_KEY.keys())
     | {token for values in FAMILY_KEY.values() for token in values}
 )
+PERSON_NAME_PATTERN = (
+    r"[A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){1,3}"
+)
+PERSON_TRAILING_WORDS = {
+    "movie",
+    "movies",
+    "film",
+    "films",
+    "series",
+    "show",
+    "shows",
+    "please",
+    "long",
+    "short",
+    "medium",
+}
 
 
 def create_profile():
     return {
         "type": None,
         "directors": [],
+        "actors": [],
+        "people": [],
         "languages": [],
         "durations": [],
         "years": [],
@@ -328,6 +373,8 @@ def create_profile():
         "matched_title_candidates": [],
         "unmatched_title_candidates": [],
         "fuzzy_title_matches": {},
+        "ambiguous_title_options": [],
+        "ambiguous_title_query": None,
     }
 
 
@@ -433,6 +480,59 @@ def detect_mood(text, profile):
                     profile["mood"].append(mood)
 
 
+def clean_person_name(name):
+    name = name.strip(" .,!?:;")
+    parts = name.split()
+
+    while parts and parts[-1].lower() in PERSON_TRAILING_WORDS:
+        parts.pop()
+
+    if len(parts) < 2:
+        return ""
+
+    return " ".join(parts)
+
+
+def add_unique_person(profile, field, name):
+    cleaned_name = clean_person_name(name)
+    if cleaned_name and cleaned_name not in profile[field]:
+        profile[field].append(cleaned_name)
+
+
+def detect_people(text, profile):
+    director_patterns = [
+        rf"\b(?:directed by|from director|director|by)\s+({PERSON_NAME_PATTERN})",
+        rf"\b(?:movie|film|pelicula|película)\s+(?:by|from|de)\s+({PERSON_NAME_PATTERN})",
+        rf"\b(?:dirigida por|dirigido por|director de)\s+({PERSON_NAME_PATTERN})",
+    ]
+    actor_patterns = [
+        rf"\b(?:with|starring|featuring|actor|actress|cast)\s+({PERSON_NAME_PATTERN})",
+        rf"\b(?:con|protagonizada por|protagonizado por)\s+({PERSON_NAME_PATTERN})",
+    ]
+    generic_person_patterns = [
+        rf"\b({PERSON_NAME_PATTERN})\s+(?:movie|film|series|show)\b",
+    ]
+
+    for pattern in director_patterns:
+        for match in re.finditer(pattern, text):
+            add_unique_person(profile, "directors", match.group(1))
+
+    for pattern in actor_patterns:
+        for match in re.finditer(pattern, text):
+            add_unique_person(profile, "actors", match.group(1))
+
+    for pattern in generic_person_patterns:
+        for match in re.finditer(pattern, text):
+            name = clean_person_name(match.group(1))
+            if (
+                name
+                and name not in profile["directors"]
+                and name not in profile["actors"]
+                and name not in profile["people"]
+            ):
+                profile["people"].append(name)
+
+
 def normalize_title_text(text):
     normalized = re.sub(r"[^a-z0-9\s]", " ", text.lower())
     normalized = re.sub(r"\s+", " ", normalized).strip()
@@ -444,7 +544,9 @@ def has_explicit_title_context(text, title):
     title_context_patterns = [
         rf"\b(?:tell me about|give me information about|info about|about)\s+{escaped_title}\b",
         rf"\b(?:i like|i liked|i love|i loved|i enjoy|i enjoyed|i watched|i have seen|i've seen)\s+{escaped_title}\b",
+        rf"\b{escaped_title}\s+(?:is|was)\s+(?:one of my favorites|one of my favourites|my favorite|my favourite)\b",
         rf"\b(?:me gusta|me gust[oó]|me gustaron|me encanta|me encant[oó])\s+{escaped_title}\b",
+        rf"\b{escaped_title}\s+(?:es|esta|está)\s+(?:entre mis favoritas|entre mis favoritos|de mis favoritas|de mis favoritos|mi favorita|mi favorito)\b",
     ]
     return any(re.search(pattern, text) for pattern in title_context_patterns)
 
@@ -467,7 +569,7 @@ def is_generic_request_fragment(candidate):
     if "family" in tokens:
         generic_signal_words.add("family")
 
-    if any(token in generic_signal_words for token in tokens):
+    if len(tokens) > 1 and any(token in generic_signal_words for token in tokens):
         return True
 
     return False
@@ -476,11 +578,40 @@ def is_generic_request_fragment(candidate):
 def clean_title_candidate(candidate):
     candidate = candidate.strip()
     candidate = re.sub(
-        r"^(me ha gustado mucho|me ha gustado|me gusto mucho|me gustaron|me gust[oó]|"
+        r"^(i didn't like|i didn't enjoy|i don't like|i did not like|i did not enjoy|"
+        r"i do not like|i disliked|i dislike|i hated|i hate|"
+        r"i'm not a fan of|i am not a fan of|not a fan of|"
+        r"no me gust[oó]|no me ha gustado|no me gustaron|no me encant[oó]|"
+        r"odi[eé]|lo odi[eé]|la odi[eé])\s+",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    candidate = re.sub(
+        r"^(my favorite|my favourite|mi favorita|mi favorito|"
+        r"one of my favorites is|one of my favourites is|"
+        r"una de mis favoritas es|uno de mis favoritos es|"
+        r"me ha gustado mucho|me ha gustado|me gusto mucho|me gustaron|me gust[oó]|"
         r"me encanta|i really like|i really liked|i like|i liked|i loved|i love|"
         r"i enjoy|i enjoyed|i already watched|i have watched|i've watched|i watched|"
         r"i already saw|i already seen|i saw|i have seen|i've seen|i just watched|"
         r"i just saw|he visto|acabo de ver)\s+",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    candidate = re.sub(
+        r"\s+(?:is|was|are|were|es|esta|está|son)?\s*"
+        r"(?:one of my favorites|one of my favourites|my favorite|my favourite|"
+        r"one of my top favorites|one of my top favourites|"
+        r"de mis favoritas|de mis favoritos|entre mis favoritas|entre mis favoritos|"
+        r"mi favorita|mi favorito|una de mis favoritas|uno de mis favoritos)\b.*$",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    candidate = re.sub(
+        r"^(the\s+)?(movie|film|series|show|pelicula|película|serie)(\s+is|\s+was)?\s+",
         "",
         candidate,
         flags=re.IGNORECASE,
@@ -560,32 +691,64 @@ def add_matched_title(profile, title):
         profile["liked_titles"].append(title)
 
 
-def detect_titles(text, profile, knowledge_base, allow_ambiguous_titles=False):
-    text_lower = text.lower()
-    title_index = {}
-    exact_matches = set()
+GREETING_SKIP_WORDS = {
+    "hello", "hi", "hey", "hola", "holi",
+    "good morning", "good afternoon", "good evening", "good night",
+    "buenos dias", "buenos días", "buenas tardes", "buenas noches",
+    "what's up", "whats up", "sup", "yo",
+}
 
-    for item in knowledge_base:
-        title = item.get("then")
-        if not title:
-            continue
 
-        normalized_title = normalize_title_text(title)
-        title_index[normalized_title] = title
+AMBIGUOUS_FRANCHISE_TITLES = {
+    "batman",
+    "star wars",
+}
 
-        if (
-            " " not in normalized_title
-            and normalized_title in AMBIGUOUS_TITLE_TOKENS
-            and not has_explicit_title_context(text_lower, title)
-            and not allow_ambiguous_titles
-        ):
-            continue
 
-        if title.lower() in text_lower:
-            add_matched_title(profile, title)
-            exact_matches.add(title)
+def should_ask_for_title_selection(candidate, similar_results):
+    normalized_candidate = normalize_title_text(candidate)
 
+    return (
+        normalized_candidate in AMBIGUOUS_FRANCHISE_TITLES
+        and len(similar_results) > 1
+    )
+
+
+def sort_title_selection_options(options, candidate):
+    normalized_candidate = normalize_title_text(candidate)
+
+    return sorted(
+        options,
+        key=lambda item: (
+            normalize_title_text(item["title"]) != normalized_candidate,
+            item.get("media_type") != "movie",
+        ),
+    )
+
+
+def detect_titles_tmdb(text, profile, allow_ambiguous_titles=False):
+    try:
+        from tmdb import search_title
+    except ImportError:
+        return
+
+    text_lower = text.strip().lower()
+    
+    if text_lower in GREETING_SKIP_WORDS or len(text_lower) <= 5:
+        return
+    
+    content_type_hint = None
+    if "movie" in text_lower or "film" in text_lower or "pelicula" in text_lower or "película" in text_lower:
+        content_type_hint = "movie"
+    elif "series" in text_lower or "show" in text_lower or "serie" in text_lower:
+        content_type_hint = "series"
+
+    cleaned_full_text = clean_title_candidate(text)
     candidates = extract_title_candidates(text)
+
+    if cleaned_full_text and len(cleaned_full_text) >= 3 and len(candidates) <= 1:
+        if cleaned_full_text not in candidates:
+            candidates.insert(0, cleaned_full_text)
 
     for candidate in candidates:
         normalized_candidate = normalize_title_text(candidate)
@@ -596,78 +759,126 @@ def detect_titles(text, profile, knowledge_base, allow_ambiguous_titles=False):
         if (
             len(candidate_tokens) == 1
             and candidate_tokens[0] in GENERIC_PREFERENCE_TOKENS
-            and not (
-                allow_ambiguous_titles
-                and normalized_candidate in title_index
+            and not allow_ambiguous_titles
+            and not has_explicit_title_context(text_lower, candidate)
+        ):
+            continue
+
+        people_to_skip = (
+            profile["directors"] + profile["actors"] + profile["people"]
+        )
+        if people_to_skip and any(
+            normalize_title_text(person) in normalized_candidate
+            for person in people_to_skip
+        ):
+            continue
+
+        results = search_title(candidate, content_type=content_type_hint)
+        if results:
+            candidate_lower = candidate.lower().strip()
+            normalized_candidate = normalize_title_text(candidate)
+            
+            similar_results = []
+            for r in results[:15]:
+                title = r.get("title") or r.get("name") or ""
+                title_lower = title.lower()
+                
+                if candidate_lower in title_lower or title_lower.startswith(candidate_lower.split()[0]):
+                    year = ""
+                    date = r.get("release_date") or r.get("first_air_date") or ""
+                    if date:
+                        year = date[:4]
+                    similar_results.append({
+                        "title": title,
+                        "year": year,
+                        "id": r.get("id"),
+                        "media_type": r.get("media_type", "movie"),
+                    })
+
+            if should_ask_for_title_selection(candidate, similar_results):
+                profile["ambiguous_title_options"] = sort_title_selection_options(
+                    similar_results,
+                    candidate,
+                )[:6]
+                profile["ambiguous_title_query"] = candidate
+                return
+
+            exact_result = next(
+                (
+                    item
+                    for item in similar_results
+                    if normalize_title_text(item["title"]) == normalized_candidate
+                ),
+                None,
             )
-        ):
-            continue
+            if exact_result:
+                add_matched_title(profile, exact_result["title"])
 
-        if exact_matches and any(
-            normalize_title_text(exact_title) in normalized_candidate
-            for exact_title in exact_matches
-        ):
-            continue
+                if exact_result["title"] not in profile["matched_title_candidates"]:
+                    profile["matched_title_candidates"].append(exact_result["title"])
 
-        if profile["directors"] and any(
-            normalize_title_text(director) in normalized_candidate
-            for director in profile["directors"]
-        ):
-            continue
+                continue
 
-        matched_title, was_fuzzy = find_best_title_match(candidate, title_index)
+            top_title = results[0].get("title") or results[0].get("name") or ""
+            if normalize_title_text(top_title) == normalized_candidate:
+                add_matched_title(profile, top_title)
 
-        if matched_title is None:
+                if top_title not in profile["matched_title_candidates"]:
+                    profile["matched_title_candidates"].append(top_title)
+
+                continue
+            
+            if len(similar_results) > 1:
+                seen = set()
+                unique_results = []
+                for r in similar_results:
+                    key = (r["title"], r["year"])
+                    if key not in seen:
+                        seen.add(key)
+                        unique_results.append(r)
+
+                profile["ambiguous_title_options"] = sort_title_selection_options(
+                    unique_results,
+                    candidate,
+                )[:6]
+                profile["ambiguous_title_query"] = candidate
+                return
+            
+            best_match = results[0]
+            matched_title = best_match.get("title") or best_match.get("name")
+
+            if matched_title:
+                add_matched_title(profile, matched_title)
+
+                if matched_title not in profile["matched_title_candidates"]:
+                    profile["matched_title_candidates"].append(matched_title)
+
+                if candidate.lower() != matched_title.lower():
+                    profile["fuzzy_title_matches"][candidate] = matched_title
+                
+                continue
+        else:
             if candidate not in profile["unmatched_title_candidates"]:
                 profile["unmatched_title_candidates"].append(candidate)
-            continue
-
-        add_matched_title(profile, matched_title)
-
-        if matched_title not in profile["matched_title_candidates"]:
-            profile["matched_title_candidates"].append(matched_title)
-
-        if was_fuzzy:
-            profile["fuzzy_title_matches"][candidate] = matched_title
-
-
-def detect_directors(text, profile, knowledge_base):
-    text_lower = text.lower()
-
-    for item in knowledge_base:
-        director = item.get("if", {}).get("director")
-        if not director:
-            continue
-
-        director_parts = [
-            part for part in re.split(r"and|,", director.lower()) if part.strip()
-        ]
-        if director.lower() in text_lower or any(
-            part.strip() in text_lower for part in director_parts
-        ):
-            if director not in profile["directors"]:
-                profile["directors"].append(director)
 
 
 def extract_preferences(
     user_input,
     profile,
-    knowledge_base,
     allow_ambiguous_titles=False,
 ):
 
     detect_type(user_input, profile)
-    detect_directors(user_input, profile, knowledge_base)
     detect_languages(user_input, profile)
     detect_durations(user_input, profile)
     detect_years(user_input, profile)
     detect_family(user_input, profile)
     detect_genres(user_input, profile)
     detect_mood(user_input, profile)
-    detect_titles(
+    detect_people(user_input, profile)
+    detect_titles_tmdb(
         user_input,
         profile,
-        knowledge_base,
         allow_ambiguous_titles=allow_ambiguous_titles,
     )
 
